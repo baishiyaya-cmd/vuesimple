@@ -399,6 +399,7 @@
       key: props && props.key,
       ref: props && props.ref,
       el: null,
+      component: null,
       shapeFlag: getShapeFlag(type)
     };
     
@@ -604,20 +605,33 @@
             instance.render = compileTemplate(rootComponent.template);
           }
 
-          // Basic rendering
+          // Component render effect
           if (instance.render) {
-            const renderFn = () => {
+            const componentUpdateFn = () => {
               setCurrentInstance(instance);
               try {
-                const vnode = instance.render.call(instance.setupState || {});
-                renderVNode(vnode, rootContainer);
+                if (!instance.isMounted) {
+                  // Initial mount
+                  const subTree = instance.render.call(instance.setupState || {});
+                  instance.subTree = subTree;
+                  // Clear container on initial mount
+                  rootContainer.innerHTML = '';
+                  mount(subTree, rootContainer);
+                  instance.isMounted = true;
+                } else {
+                  // Update
+                  const nextTree = instance.render.call(instance.setupState || {});
+                  const prevTree = instance.subTree;
+                  instance.subTree = nextTree;
+                  patch(prevTree, nextTree, rootContainer);
+                }
               } finally {
                 setCurrentInstance(null);
               }
             };
             
             // Set up reactive rendering
-            effect(renderFn);
+            effect(componentUpdateFn);
           }
 
           isMounted = true;
@@ -647,152 +661,379 @@
       type,
       render: null,
       setupState: null,
+      subTree: null,
+      isMounted: false,
       props: {},
       emit: NOOP
     };
   }
 
-  // Very basic VNode rendering (simplified)
-  function renderVNode(vnode, container) {
-    if (!vnode) {
+  // Patch algorithm for efficient DOM updates
+  function patch(n1, n2, container, anchor = null) {
+    if (n1 === n2) {
       return;
     }
     
-    // Clear container first on initial render
-    if (!container.hasChildNodes()) {
-      container.innerHTML = '';
+    // If types are different, unmount old and mount new
+    if (n1 && !isSameVNodeType(n1, n2)) {
+      unmount(n1);
+      n1 = null;
     }
     
+    if (!n2) {
+      if (n1) unmount(n1);
+      return;
+    }
+    
+    const { type } = n2;
+    
+    if (n1 == null) {
+      // Mount new node
+      mount(n2, container, anchor);
+    } else {
+      // Update existing node
+      if (n2.shapeFlag & 4) {
+        patchComponent(n1, n2);
+      } else {
+        patchElement(n1, n2);
+      }
+    }
+  }
+  
+  function isSameVNodeType(n1, n2) {
+    return n1.type === n2.type && n1.key === n2.key;
+  }
+  
+  function mount(vnode, container, anchor = null) {
+    if (!vnode) return;
+    
     if (isArray(vnode)) {
-      vnode.forEach(child => renderVNode(child, container));
+      vnode.forEach(child => mount(child, container, anchor));
       return;
     }
     
     if (!isVNode(vnode)) {
       const textNode = document.createTextNode(String(vnode));
-      container.appendChild(textNode);
+      container.insertBefore(textNode, anchor);
+      vnode.el = textNode;
       return;
     }
     
     if (vnode.type === Text) {
       const textNode = document.createTextNode(vnode.children || '');
-      container.appendChild(textNode);
+      container.insertBefore(textNode, anchor);
+      vnode.el = textNode;
       return;
     }
     
     if (vnode.type === Comment) {
       const commentNode = document.createComment(vnode.children || '');
-      container.appendChild(commentNode);
+      container.insertBefore(commentNode, anchor);
+      vnode.el = commentNode;
       return;
     }
     
     if (vnode.type === Fragment) {
+      const fragmentStart = document.createComment('fragment-start');
+      const fragmentEnd = document.createComment('fragment-end');
+      container.insertBefore(fragmentStart, anchor);
+      container.insertBefore(fragmentEnd, anchor);
+      vnode.el = fragmentStart;
+      vnode.anchor = fragmentEnd;
+      
       if (vnode.children) {
         if (isArray(vnode.children)) {
-          vnode.children.forEach(child => renderVNode(child, container));
+          vnode.children.forEach(child => mount(child, container, fragmentEnd));
         } else {
-          renderVNode(vnode.children, container);
+          mount(vnode.children, container, fragmentEnd);
         }
       }
       return;
     }
     
-    // Element or component
+    // Element
     if (isString(vnode.type)) {
       const el = document.createElement(vnode.type);
+      vnode.el = el;
       
       // Set props
       if (vnode.props) {
         for (const key in vnode.props) {
-          const value = vnode.props[key];
-          if (key === 'style' && isObject(value)) {
-            for (const styleKey in value) {
-              el.style[styleKey] = value[styleKey];
-            }
-          } else if (key.startsWith('on') && isFunction(value)) {
-            const eventName = key.slice(2).toLowerCase();
-            el.addEventListener(eventName, value);
-          } else if (value != null) {
-            el.setAttribute(key, String(value));
-          }
+          patchProp(el, key, null, vnode.props[key]);
         }
       }
       
-      // Render children
+      // Mount children
       if (vnode.children) {
         if (isString(vnode.children)) {
           el.textContent = vnode.children;
         } else if (isArray(vnode.children)) {
-          vnode.children.forEach(child => renderVNode(child, el));
+          vnode.children.forEach(child => mount(child, el));
         } else {
-          renderVNode(vnode.children, el);
+          mount(vnode.children, el);
         }
       }
       
-      container.appendChild(el);
-      vnode.el = el;
+      container.insertBefore(el, anchor);
+    }
+    // Component
+    else if (vnode.shapeFlag & 4) {
+      mountComponent(vnode, container, anchor);
     }
   }
-
-
-  // Watch implementation
-  function watchEffect(fn, options = {}) {
-    return doWatch(fn, null, options);
-  }
-
-  function watch(source, cb, options = {}) {
-    return doWatch(source, cb, options);
-  }
-
-  function doWatch(source, cb, options = {}) {
-    let getter;
-    let forceTrigger = false;
-
-    if (isRef(source)) {
-      getter = () => source.value;
-      forceTrigger = true;
-    } else if (isReactive(source)) {
-      getter = () => source;
-      forceTrigger = true;
-    } else if (isFunction(source)) {
-      if (cb) {
-        getter = source;
-      } else {
-        getter = () => source();
-      }
-    } else {
-      getter = NOOP;
-    }
-
-    let oldValue = cb ? (isArray(source) ? [] : {}) : void 0;
-
-    const job = () => {
-      if (cb) {
-        const newValue = effectRunner.run();
-        if (forceTrigger || hasChanged(newValue, oldValue)) {
-          cb(newValue, oldValue);
-          oldValue = newValue;
-        }
-      } else {
-        effectRunner.run();
-      }
-    };
-
-    const effectRunner = new ReactiveEffect(getter, job);
+  
+  function mountComponent(vnode, container, anchor) {
+    const instance = createComponentInstance(vnode.type);
+    vnode.component = instance;
     
-    if (cb) {
-      if (options.immediate) {
-        job();
+    // Setup component
+    if (vnode.type.setup) {
+      setCurrentInstance(instance);
+      try {
+        const setupResult = vnode.type.setup(vnode.props || {});
+        if (isFunction(setupResult)) {
+          instance.render = setupResult;
+        } else if (isObject(setupResult)) {
+          instance.setupState = reactive(setupResult);
+        }
+      } finally {
+        setCurrentInstance(null);
+      }
+    }
+    
+    // Handle template compilation
+    if (vnode.type.template && !instance.render) {
+      instance.render = compileTemplate(vnode.type.template);
+    }
+    
+    // Set up component rendering
+    if (instance.render) {
+      const componentUpdateFn = () => {
+        setCurrentInstance(instance);
+        try {
+          if (!instance.isMounted) {
+            // Initial mount
+            const subTree = instance.render.call(instance.setupState || {});
+            instance.subTree = subTree;
+            mount(subTree, container, anchor);
+            vnode.el = subTree.el;
+            instance.isMounted = true;
+          } else {
+            // Update
+            const nextTree = instance.render.call(instance.setupState || {});
+            const prevTree = instance.subTree;
+            instance.subTree = nextTree;
+            patch(prevTree, nextTree, container);
+            vnode.el = nextTree.el;
+          }
+        } finally {
+          setCurrentInstance(null);
+        }
+      };
+      
+      // Set up reactive rendering
+      effect(componentUpdateFn);
+    }
+  }
+  
+  function patchComponent(n1, n2) {
+    const instance = n2.component = n1.component;
+    // For components, we just trigger a re-render
+    // The component's own effect will handle the update
+    if (instance && instance.isMounted) {
+      n2.el = n1.el;
+      // Component will update itself through its reactive effect
+    }
+  }
+  
+  function patchElement(n1, n2) {
+    const el = n2.el = n1.el;
+    const oldProps = n1.props || {};
+    const newProps = n2.props || {};
+    
+    // Update props
+    for (const key in newProps) {
+      const oldValue = oldProps[key];
+      const newValue = newProps[key];
+      if (newValue !== oldValue) {
+        patchProp(el, key, oldValue, newValue);
+      }
+    }
+    
+    // Remove old props
+    for (const key in oldProps) {
+      if (!(key in newProps)) {
+        patchProp(el, key, oldProps[key], null);
+      }
+    }
+    
+    // Update children
+    patchChildren(n1, n2, el);
+  }
+  
+  function patchChildren(n1, n2, container) {
+    const c1 = n1.children;
+    const c2 = n2.children;
+    
+    if (isString(c2)) {
+      if (isArray(c1)) {
+        c1.forEach(child => unmount(child));
+      }
+      if (c1 !== c2) {
+        container.textContent = c2;
+      }
+    } else if (isArray(c2)) {
+      if (isArray(c1)) {
+        patchKeyedChildren(c1, c2, container);
       } else {
-        oldValue = effectRunner.run();
+        if (isString(c1)) {
+          container.textContent = '';
+        }
+        c2.forEach(child => mount(child, container));
+      }
+    } else if (c2) {
+      if (isArray(c1)) {
+        c1.forEach(child => unmount(child));
+      } else if (isString(c1)) {
+        container.textContent = '';
+      }
+      mount(c2, container);
+    } else {
+      if (isArray(c1)) {
+        c1.forEach(child => unmount(child));
+      } else if (isString(c1)) {
+        container.textContent = '';
+      }
+    }
+  }
+  
+  function patchKeyedChildren(c1, c2, container) {
+    let i = 0;
+    const l2 = c2.length;
+    let e1 = c1.length - 1;
+    let e2 = l2 - 1;
+    
+    // 1. sync from start
+    while (i <= e1 && i <= e2) {
+      const n1 = c1[i];
+      const n2 = c2[i];
+      if (isSameVNodeType(n1, n2)) {
+        patch(n1, n2, container);
+      } else {
+        break;
+      }
+      i++;
+    }
+    
+    // 2. sync from end
+    while (i <= e1 && i <= e2) {
+      const n1 = c1[e1];
+      const n2 = c2[e2];
+      if (isSameVNodeType(n1, n2)) {
+        patch(n1, n2, container);
+      } else {
+        break;
+      }
+      e1--;
+      e2--;
+    }
+    
+    // 3. common sequence + mount
+    if (i > e1) {
+      if (i <= e2) {
+        const nextPos = e2 + 1;
+        const anchor = nextPos < l2 ? c2[nextPos].el : null;
+        while (i <= e2) {
+          mount(c2[i], container, anchor);
+          i++;
+        }
+      }
+    }
+    // 4. common sequence + unmount
+    else if (i > e2) {
+      while (i <= e1) {
+        unmount(c1[i]);
+        i++;
+      }
+    }
+    // 5. complex case - simplified for minimal implementation
+    else {
+      // For simplicity, just unmount all old and mount all new
+      // A full implementation would use a more sophisticated algorithm
+      for (let j = i; j <= e1; j++) {
+        unmount(c1[j]);
+      }
+      for (let j = i; j <= e2; j++) {
+        mount(c2[j], container);
+      }
+    }
+  }
+  
+  function patchProp(el, key, oldValue, newValue) {
+    if (key === 'style' && isObject(newValue)) {
+      if (isObject(oldValue)) {
+        // Remove old styles
+        for (const styleKey in oldValue) {
+          if (!(styleKey in newValue)) {
+            el.style[styleKey] = '';
+          }
+        }
+      }
+      // Add new styles
+      for (const styleKey in newValue) {
+        el.style[styleKey] = newValue[styleKey];
+      }
+    } else if (key.startsWith('on') && isFunction(newValue)) {
+      const eventName = key.slice(2).toLowerCase();
+      if (isFunction(oldValue)) {
+        el.removeEventListener(eventName, oldValue);
+      }
+      if (newValue) {
+        el.addEventListener(eventName, newValue);
+      }
+    } else if (newValue == null) {
+      el.removeAttribute(key);
+    } else {
+      el.setAttribute(key, String(newValue));
+    }
+  }
+  
+  function unmount(vnode) {
+    if (!vnode) return;
+    
+    if (vnode.shapeFlag & 4 && vnode.component) {
+      // Component unmounting
+      if (vnode.component.subTree) {
+        unmount(vnode.component.subTree);
+      }
+      return;
+    }
+    
+    if (!vnode.el) return;
+    
+    const parent = vnode.el.parentNode;
+    if (!parent) return;
+    
+    if (vnode.type === Fragment) {
+      // Remove fragment children
+      let current = vnode.el.nextSibling;
+      while (current && current !== vnode.anchor) {
+        const next = current.nextSibling;
+        if (current.parentNode) {
+          current.parentNode.removeChild(current);
+        }
+        current = next;
+      }
+      // Remove fragment markers
+      if (vnode.el.parentNode) {
+        vnode.el.parentNode.removeChild(vnode.el);
+      }
+      if (vnode.anchor && vnode.anchor.parentNode) {
+        vnode.anchor.parentNode.removeChild(vnode.anchor);
       }
     } else {
-      effectRunner.run();
+      parent.removeChild(vnode.el);
     }
-
-    return () => {
-      effectRunner.stop();
-    };
   }
 
   // Utility functions

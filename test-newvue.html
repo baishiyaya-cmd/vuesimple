@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test NewVue Fixed</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .counter { padding: 10px; border: 1px solid #ccc; margin: 10px 0; }
+        button { padding: 5px 10px; margin: 0 5px; }
+    </style>
+</head>
+<body>
+    <h1>NewVue Fixed - No Duplicate Rendering</h1>
+    <div id="app"></div>
+
+    <script src="./newvue.js"></script>
+    <script>
+        const { h, ref, reactive, createApp } = NewVue;
+
+        const app = createApp({
+            setup() {
+                const count = ref(0);
+                const items = reactive([]);
+                
+                const addItem = () => {
+                    items.push(`Item ${items.length + 1}`);
+                };
+                
+                const increment = () => count.value++;
+                
+                return () => h('div', {}, [
+                    h('div', { class: 'counter' }, [
+                        h('p', {}, `Count: ${count.value}`),
+                        h('button', { onclick: increment }, 'Increment')
+                    ]),
+                    h('div', {}, [
+                        h('button', { onclick: addItem }, 'Add Item'),
+                        h('p', {}, `Items count: ${items.length}`)
+                    ]),
+                    h('ul', {}, 
+                        items.map((item, index) => 
+                            h('li', { key: index }, item)
+                        )
+                    )
+                ]);
+            }
+        });
+
+        app.mount('#app');
+    </script>
+</body>
+</html>
