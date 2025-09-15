@@ -1,0 +1,168 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>NewVue Demo</title>
+    <style>
+      body { font-family: Arial, sans-serif; padding: 20px; }
+      .card { border: 1px solid #ddd; padding: 12px; border-radius: 8px; margin-bottom: 10px; }
+      .row { display: flex; gap: 8px; align-items: center; }
+      .list { margin-top: 10px; }
+      .item { display: flex; gap: 8px; align-items: center; }
+      .muted { color: #999; }
+    </style>
+  </head>
+  <body>
+    <h1>NewVue Demo</h1>
+    <div id="app"></div>
+
+    <script src="./vue.global.js"></script>
+    <script src="./newvue.js"></script>
+    <script>
+      const Counter = NewVue.defineComponent({
+        props: { initial: { type: Number, default: 0 } },
+        setup(props) {
+          const count = NewVue.ref(props.initial);
+          const inc = () => (count.value++);
+          const dec = () => (count.value--);
+          return { count, inc, dec };
+        },
+        template: `
+          <div class="card row">
+            <button @click="dec">-</button>
+            <strong>{{ count }}</strong>
+            <button @click="inc">+</button>
+            <span class="muted">(component)</span>
+          </div>
+        `,
+      });
+
+      const App = NewVue.defineComponent({
+        components: { Counter },
+        setup() {
+          const state = NewVue.reactive({
+            title: 'Hello NewVue',
+            msg: 'Edit the input to see v-model',
+            input: 'Type here...',
+            items: [
+              { id: 1, text: 'Learn reactivity' },
+              { id: 2, text: 'Practice diff' },
+              { id: 3, text: 'Build components' },
+            ],
+            nextId: 4,
+            tree: {
+              name: 'root',
+              children: [
+                {
+                  name: 'A',
+                  children: [
+                    { name: 'A-1' },
+                    { name: 'A-2', children: [{ name: 'A-2-a' }, { name: 'A-2-b' }] },
+                  ],
+                },
+                {
+                  name: 'B',
+                  children: [
+                    { name: 'B-1' },
+                    { name: 'B-2' },
+                    { name: 'B-3', children: [{ name: 'B-3-a' }] },
+                  ],
+                },
+              ],
+            },
+          });
+          function addItem() {
+            state.items.push({ id: state.nextId++, text: 'New #' + Date.now() });
+          }
+          function shuffle() {
+            state.items.sort(() => Math.random() - 0.5);
+          }
+          function removeFirst() {
+            state.items.shift();
+          }
+          return { state, addItem, shuffle, removeFirst };
+        },
+        template: `
+          <div>
+            <h2>{{ state.title }}</h2>
+            <p>{{ state.msg }}</p>
+            <div class="card">
+              <div class="row">
+                <label>Two-way:</label>
+                <input v-model="state.input" />
+                <span>=> {{ state.input }}</span>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="row">
+                <button @click="addItem">Add item</button>
+                <button @click="shuffle">Shuffle</button>
+                <button @click="removeFirst">Remove first</button>
+              </div>
+              <div class="list">
+                <div class="item" v-for="(it, i) in state.items" :key="it.id">
+                  <span>#{{ i }}</span>
+                  <input v-model="it.text" />
+                  <span>{{ it.text }}</span>
+                </div>
+              </div>
+            </div>
+
+            <Counter :initial="10" />
+
+            <div class="card" v-if="state.items.length > 0">
+              <em>v-if demo: items exist ({{ state.items.length }})</em>
+            </div>
+
+            <div class="card">
+              <h3>Recursive component (TreeNode) with termination</h3>
+              <TreeNode :node="state.tree" :level="0" :maxDepth="4" />
+            </div>
+          </div>
+        `,
+      });
+
+      const TreeNode = NewVue.defineComponent({
+        name: 'TreeNode',
+        props: {
+          node: { type: Object, required: true },
+          level: { type: Number, default: 0 },
+          maxDepth: { type: Number, default: 4 },
+        },
+        setup(props) {
+          const open = NewVue.ref(true);
+          const toggle = () => (open.value = !open.value);
+          return { open, toggle };
+        },
+        template: `
+          <div :style="{ marginLeft: (level * 16) + 'px' }">
+            <div class="row">
+              <button @click="toggle" v-if="node.children && node.children.length">
+                {{ open ? '▾' : '▸' }}
+              </button>
+              <span><strong>{{ node.name }}</strong></span>
+              <span class="muted">(level: {{ level }})</span>
+            </div>
+            <div v-if="open && level < maxDepth && node.children && node.children.length">
+              <TreeNode
+                v-for="(child, idx) in node.children"
+                :key="node.name + '-' + idx"
+                :node="child"
+                :level="level + 1"
+                :maxDepth="maxDepth"
+              />
+            </div>
+          </div>
+        `,
+      });
+
+      const app = NewVue.createApp(App);
+      app.component('TreeNode', TreeNode);
+      app.mount('#app');
+    </script>
+  </body>
+  </html>
+
+
