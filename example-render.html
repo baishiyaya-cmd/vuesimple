@@ -1,0 +1,154 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>NewVue Demo - Render Functions</title>
+    <style>
+      body { font-family: Arial, sans-serif; padding: 20px; }
+      .card { border: 1px solid #ddd; padding: 12px; border-radius: 8px; margin-bottom: 10px; }
+      .row { display: flex; gap: 8px; align-items: center; }
+      .list { margin-top: 10px; }
+      .item { display: flex; gap: 8px; align-items: center; }
+      .muted { color: #999; }
+      input { padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+      button { padding: 8px 16px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; background: white; }
+      button:hover { background: #f0f0f0; }
+    </style>
+  </head>
+  <body>
+    <h1>NewVue Demo - 使用渲染函数</h1>
+    <div id="app"></div>
+
+    <script src="./newvue.js"></script>
+    <script>
+      const { h, ref, reactive, computed, defineComponent, createApp } = NewVue;
+
+      // Counter 组件 - 使用渲染函数
+      const Counter = defineComponent({
+        name: 'Counter',
+        props: { initial: { type: Number, default: 0 } },
+        setup(props) {
+          const count = ref(props.initial);
+          const inc = () => count.value++;
+          const dec = () => count.value--;
+          
+          return () => h('div', { class: 'card row' }, [
+            h('button', { onclick: dec }, '-'),
+            h('strong', {}, count.value),
+            h('button', { onclick: inc }, '+'),
+            h('span', { class: 'muted' }, '(render function)')
+          ]);
+        }
+      });
+
+      // 主应用组件
+      const App = defineComponent({
+        name: 'App',
+        setup() {
+          const state = reactive({
+            title: 'Hello NewVue with Render Functions',
+            msg: '这个版本使用渲染函数而不是模板',
+            input: 'Type here...',
+            items: [
+              { id: 1, text: 'Learn reactivity' },
+              { id: 2, text: 'Practice render functions' },
+              { id: 3, text: 'Build components' },
+            ],
+            nextId: 4
+          });
+
+          const itemCount = computed(() => state.items.length);
+          
+          function addItem() {
+            state.items.push({ 
+              id: state.nextId++, 
+              text: 'New item #' + Date.now() 
+            });
+          }
+          
+          function shuffle() {
+            state.items.sort(() => Math.random() - 0.5);
+          }
+          
+          function removeFirst() {
+            state.items.shift();
+          }
+
+          function updateInput(event) {
+            state.input = event.target.value;
+          }
+
+          function updateItemText(item, event) {
+            item.text = event.target.value;
+          }
+
+          return () => h('div', {}, [
+            h('h2', {}, state.title),
+            h('p', {}, state.msg),
+            
+            // 输入框演示
+            h('div', { class: 'card' }, [
+              h('div', { class: 'row' }, [
+                h('label', {}, 'Two-way binding: '),
+                h('input', { 
+                  value: state.input,
+                  oninput: updateInput
+                }),
+                h('span', {}, ` => ${state.input}`)
+              ])
+            ]),
+
+            // 列表操作演示
+            h('div', { class: 'card' }, [
+              h('div', { class: 'row' }, [
+                h('button', { onclick: addItem }, 'Add item'),
+                h('button', { onclick: shuffle }, 'Shuffle'),
+                h('button', { onclick: removeFirst }, 'Remove first'),
+                h('span', { class: 'muted' }, `(${itemCount.value} items)`)
+              ]),
+              h('div', { class: 'list' }, 
+                state.items.map((item, i) => 
+                  h('div', { class: 'item', key: item.id }, [
+                    h('span', {}, `#${i}`),
+                    h('input', { 
+                      value: item.text,
+                      oninput: (e) => updateItemText(item, e)
+                    }),
+                    h('span', {}, item.text)
+                  ])
+                )
+              )
+            ]),
+
+            // Counter 组件
+            h(Counter, { initial: 10 }),
+
+            // 条件渲染演示
+            state.items.length > 0 ? h('div', { class: 'card' }, [
+              h('em', {}, `条件渲染演示: 有 ${state.items.length} 个项目`)
+            ]) : null,
+
+            // 功能说明
+            h('div', { class: 'card' }, [
+              h('h3', {}, '🚀 NewVue 精简版特性'),
+              h('ul', {}, [
+                h('li', {}, '✅ 完整的响应式系统 (reactive, ref)'),
+                h('li', {}, '✅ 计算属性和侦听器 (computed, watch, watchEffect)'),
+                h('li', {}, '✅ 虚拟 DOM 系统 (h, Fragment, Text)'),
+                h('li', {}, '✅ 组件定义和应用创建'),
+                h('li', {}, '✅ 文件大小减少 96.2% (从 555KB 到 21KB)'),
+                h('li', { style: { color: '#ff6b6b' } }, '❌ 模板编译器 (请使用渲染函数)')
+              ])
+            ])
+          ]);
+        }
+      });
+
+      // 创建并挂载应用
+      const app = createApp(App);
+      app.component('Counter', Counter);
+      app.mount('#app');
+    </script>
+  </body>
+</html>
